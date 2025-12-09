@@ -316,9 +316,27 @@
 
                     <div class="profile-card">
                         <div class="profile-avatar" id="profile-avatar">🧝</div>
+                        <button class="btn-change-avatar" id="btn-change-avatar">Cambiar avatar</button>
                         <h2 class="profile-name" id="profile-name">Usuario</h2>
                         <p class="profile-nickname" id="profile-nickname">@apodo</p>
                         <p class="profile-email" id="profile-email">correo@ejemplo.com</p>
+                    </div>
+
+                    <div class="avatar-selector-modal hidden" id="avatar-selector-modal">
+                        <div class="avatar-selector-content">
+                            <h3>Elige tu nuevo avatar</h3>
+                            <div class="avatar-grid-profile" id="avatar-grid-profile">
+                                <button type="button" class="avatar-option" data-avatar="elf">🧝</button>
+                                <button type="button" class="avatar-option" data-avatar="santa">🎅</button>
+                                <button type="button" class="avatar-option" data-avatar="mrs-claus">🤶</button>
+                                <button type="button" class="avatar-option" data-avatar="snowman">⛄</button>
+                                <button type="button" class="avatar-option" data-avatar="reindeer">🦌</button>
+                                <button type="button" class="avatar-option" data-avatar="angel">👼</button>
+                                <button type="button" class="avatar-option" data-avatar="gingerbread">🍪</button>
+                                <button type="button" class="avatar-option" data-avatar="tree">🎄</button>
+                            </div>
+                            <button class="btn btn-secondary btn-block" id="btn-cancel-avatar">Cancelar</button>
+                        </div>
                     </div>
 
                     <div class="profile-stats">
@@ -403,7 +421,9 @@
                     </header>
                     <div class="village-map" id="village-map">
                         <div class="village-ground"></div>
-                        <div class="village-houses-full" id="village-houses-full"></div>
+                        <div class="village-map-content" id="village-map-content">
+                            <div class="village-houses-full" id="village-houses-full"></div>
+                        </div>
                     </div>
                     <div class="village-legend">
                         <div class="legend-item">

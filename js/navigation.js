@@ -324,6 +324,12 @@ function loadSavedTheme() {
 }
 
 const Village = {
+    isDragging: false,
+    startX: 0,
+    startY: 0,
+    scrollLeft: 0,
+    scrollTop: 0,
+    
     async renderPreview() {
         const container = Utils.$('.village-houses');
         if (!container) return;
@@ -361,9 +367,90 @@ const Village = {
                     </div>
                 `;
             }).join('');
+            
+            // Inicializar drag después de renderizar
+            this.initDrag();
         } catch (error) {
             console.error('Error rendering village:', error);
         }
+    },
+    
+    initDrag() {
+        const map = Utils.$('#village-map');
+        const content = Utils.$('#village-map-content');
+        if (!map || !content) return;
+        
+        // Resetear posición inicial (centrado con el transform base)
+        this.scrollLeft = 0;
+        this.scrollTop = 0;
+        content.style.transform = 'translate(-50%, -50%)';
+        
+        // Límites de movimiento (margen para no mover demasiado)
+        const maxOffset = 100; // píxeles máximos de movimiento
+        
+        const startDrag = (e) => {
+            this.isDragging = true;
+            map.style.cursor = 'grabbing';
+            
+            const clientX = e.type.includes('touch') ? e.touches[0].clientX : e.clientX;
+            const clientY = e.type.includes('touch') ? e.touches[0].clientY : e.clientY;
+            
+            this.startX = clientX;
+            this.startY = clientY;
+        };
+        
+        const doDrag = (e) => {
+            if (!this.isDragging) return;
+            e.preventDefault();
+            
+            const clientX = e.type.includes('touch') ? e.touches[0].clientX : e.clientX;
+            const clientY = e.type.includes('touch') ? e.touches[0].clientY : e.clientY;
+            
+            const deltaX = clientX - this.startX;
+            const deltaY = clientY - this.startY;
+            
+            // Calcular nueva posición con límites
+            let newX = this.scrollLeft + deltaX;
+            let newY = this.scrollTop + deltaY;
+            
+            // Aplicar límites (margen)
+            newX = Math.max(-maxOffset, Math.min(maxOffset, newX));
+            newY = Math.max(-maxOffset, Math.min(maxOffset, newY));
+            
+            content.style.transform = `translate(calc(-50% + ${newX}px), calc(-50% + ${newY}px))`;
+        };
+        
+        const endDrag = (e) => {
+            if (!this.isDragging) return;
+            this.isDragging = false;
+            map.style.cursor = 'grab';
+            
+            const clientX = e.type.includes('touch') ? 
+                (e.changedTouches ? e.changedTouches[0].clientX : this.startX) : e.clientX;
+            const clientY = e.type.includes('touch') ? 
+                (e.changedTouches ? e.changedTouches[0].clientY : this.startY) : e.clientY;
+            
+            const deltaX = clientX - this.startX;
+            const deltaY = clientY - this.startY;
+            
+            // Actualizar posición guardada con límites
+            this.scrollLeft = Math.max(-maxOffset, Math.min(maxOffset, this.scrollLeft + deltaX));
+            this.scrollTop = Math.max(-maxOffset, Math.min(maxOffset, this.scrollTop + deltaY));
+        };
+        
+        // Remover listeners previos si existen
+        map.removeEventListener('mousedown', startDrag);
+        map.removeEventListener('touchstart', startDrag);
+        
+        // Mouse events
+        map.addEventListener('mousedown', startDrag);
+        document.addEventListener('mousemove', doDrag);
+        document.addEventListener('mouseup', endDrag);
+        
+        // Touch events
+        map.addEventListener('touchstart', startDrag, { passive: false });
+        document.addEventListener('touchmove', doDrag, { passive: false });
+        document.addEventListener('touchend', endDrag);
     },
     
     isUserActive(user) {
