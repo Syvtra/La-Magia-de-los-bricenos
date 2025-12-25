@@ -35,7 +35,19 @@ async function initApp() {
     try {
         initSupabase();
     } catch (e) {
-        console.error('Supabase init error:', e);
+        console.error('❌ Supabase init error:', e);
+        
+        setTimeout(() => {
+            const splash = document.getElementById('screen-splash');
+            if (splash) splash.classList.remove('active');
+            
+            const login = document.getElementById('screen-login');
+            if (login) login.classList.add('active');
+            
+            showToast('Error de conexión: ' + e.message, 'error');
+        }, 1000);
+        
+        return;
     }
     
     try {
@@ -61,11 +73,19 @@ async function initApp() {
     
     try {
         Effects.init();
+        // Inicializar contador de Navidad
+        if (typeof ChristmasCountdown !== 'undefined') {
+            ChristmasCountdown.init();
+        }
     } catch (e) {
         console.error('Effects init error:', e);
     }
     
     await loadGlobalSettings();
+    
+    // Verificar si es un flujo de recuperación de contraseña ANTES de inicializar Auth
+    const hashParams = new URLSearchParams(window.location.hash.substring(1));
+    const isPasswordRecovery = hashParams.get('type') === 'recovery';
     
     let isLoggedIn = false;
     try {
@@ -77,6 +97,12 @@ async function initApp() {
     // Mostrar pantalla después del splash
     setTimeout(async () => {
         try {
+            // Si es recuperación de contraseña, mostrar esa pantalla sin importar el estado de login
+            if (isPasswordRecovery) {
+                Navigation.showScreen('reset-password');
+                return;
+            }
+            
             if (isLoggedIn) {
                 Navigation.showScreen('home');
                 subscribeToRealtimeUpdates();
@@ -87,8 +113,18 @@ async function initApp() {
                     addHelpButton();
                 }
                 
+                // Inicializar juego de adivinanzas
+                if (typeof GuessingGame !== 'undefined') {
+                    await GuessingGame.init();
+                }
+                
                 // Verificar si hay sorteo pendiente de mostrar
                 await checkPendingSorteo();
+                
+                // Mostrar notificaciones pendientes del admin
+                if (typeof Notifications !== 'undefined') {
+                    await Notifications.showPendingNotifications();
+                }
                 
             } else {
                 Navigation.showScreen('login');
@@ -217,6 +253,24 @@ function subscribeToRealtimeUpdates() {
         console.log('Realtime: pairs changed', payload.eventType);
         if (Auth.isAdmin() && typeof Admin !== 'undefined') {
             Admin.loadData();
+        }
+    });
+
+    // Suscribirse a cambios en el estado del juego de adivinanzas
+    db.subscribeToGameState(async (payload) => {
+        console.log('Realtime: game state changed', payload.eventType);
+        if (typeof GuessingGame !== 'undefined') {
+            await GuessingGame.loadGameState();
+            GuessingGame.updateUI();
+        }
+    });
+
+    // Suscribirse a cambios en los turnos del juego
+    db.subscribeToGameTurns(async (payload) => {
+        console.log('Realtime: game turns changed', payload.eventType);
+        if (typeof GuessingGame !== 'undefined') {
+            await GuessingGame.loadGameState();
+            GuessingGame.updateUI();
         }
     });
 }

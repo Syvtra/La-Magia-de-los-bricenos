@@ -3,12 +3,97 @@ const Auth = {
     userProfile: null,
     
     async init() {
-        if (typeof supabase === 'undefined' || !supabase) {
-            console.error('Supabase not initialized');
+        if (typeof supabase === 'undefined' || !supabase || !supabase.auth) {
+            console.error('❌ Supabase not initialized properly');
+            showToast('Error: No se pudo conectar con el servidor', 'error');
             return false;
         }
         
         try {
+            // IMPORTANTE: Verificar PRIMERO si hay token de recuperación ANTES de verificar sesión
+            const hashParams = new URLSearchParams(window.location.hash.substring(1));
+            const accessToken = hashParams.get('access_token');
+            const type = hashParams.get('type');
+            
+            if (type === 'recovery' && accessToken) {
+                // Usuario llegó desde el enlace de recuperación
+                console.log('🔐 Token de recuperación detectado');
+                
+                // Verificar si hay una contraseña pendiente en localStorage
+                const pendingReset = localStorage.getItem('pending_password_reset');
+                
+                if (pendingReset) {
+                    try {
+                        const resetData = JSON.parse(pendingReset);
+                        const { email, newPassword, timestamp } = resetData;
+                        
+                        // Verificar que no haya expirado (24 horas)
+                        const hoursSinceRequest = (Date.now() - timestamp) / (1000 * 60 * 60);
+                        
+                        if (hoursSinceRequest < 24) {
+                            console.log('🔐 Aplicando nueva contraseña automáticamente...');
+                            
+                            // Actualizar la contraseña usando el token de recuperación
+                            const { error: updateError } = await supabase.auth.updateUser({
+                                password: newPassword
+                            });
+                            
+                            if (!updateError) {
+                                // Contraseña actualizada exitosamente
+                                localStorage.removeItem('pending_password_reset');
+                                
+                                // Limpiar la URL
+                                window.history.replaceState({}, document.title, window.location.pathname);
+                                
+                                // Obtener la sesión actual
+                                const { data: { session } } = await supabase.auth.getSession();
+                                
+                                if (session) {
+                                    this.currentUser = session.user;
+                                    await this.loadUserProfile();
+                                    
+                                    showToast('¡Contraseña actualizada exitosamente!', 'success');
+                                    
+                                    // Redirigir al home
+                                    setTimeout(() => {
+                                        Navigation.showScreen('home');
+                                    }, 500);
+                                    
+                                    return true;
+                                }
+                            } else {
+                                console.error('Error al actualizar contraseña:', updateError);
+                                localStorage.removeItem('pending_password_reset');
+                            }
+                        } else {
+                            // Expiró la solicitud
+                            localStorage.removeItem('pending_password_reset');
+                            showToast('La solicitud de cambio expiró. Intenta de nuevo.', 'error');
+                        }
+                    } catch (e) {
+                        console.error('Error procesando reset:', e);
+                        localStorage.removeItem('pending_password_reset');
+                    }
+                }
+                
+                // Si no hay contraseña pendiente o hubo error, mostrar pantalla de reset manual
+                window.history.replaceState({}, document.title, window.location.pathname);
+                
+                supabase.auth.onAuthStateChange(async (event, session) => {
+                    if (event === 'SIGNED_OUT') {
+                        this.currentUser = null;
+                        this.userProfile = null;
+                        Navigation.showScreen('login');
+                    }
+                });
+                
+                setTimeout(() => {
+                    Navigation.showScreen('reset-password');
+                }, 100);
+                
+                return false;
+            }
+            
             const { data: { session } } = await supabase.auth.getSession();
             
             if (session) {
@@ -27,6 +112,10 @@ const Auth = {
                     this.currentUser = null;
                     this.userProfile = null;
                     Navigation.showScreen('login');
+                } else if (event === 'PASSWORD_RECOVERY') {
+                    // Supabase detectó recuperación de contraseña
+                    console.log('🔐 PASSWORD_RECOVERY event');
+                    Navigation.showScreen('reset-password');
                 }
             });
             
@@ -49,6 +138,10 @@ const Auth = {
     },
     
     async login(email, password) {
+        if (!supabase || !supabase.auth) {
+            throw new Error('No se pudo conectar con el servidor');
+        }
+        
         const { data, error } = await supabase.auth.signInWithPassword({
             email,
             password
@@ -66,6 +159,10 @@ const Auth = {
     },
     
     async register(userData) {
+        if (!supabase || !supabase.auth) {
+            throw new Error('No se pudo conectar con el servidor');
+        }
+        
         const { email, password, name, nickname, avatar } = userData;
         
         const { data: authData, error: authError } = await supabase.auth.signUp({
@@ -117,11 +214,71 @@ const Auth = {
     },
     
     async logout() {
+        if (!supabase || !supabase.auth) {
+            throw new Error('No se pudo conectar con el servidor');
+        }
+        
         const { error } = await supabase.auth.signOut();
         if (error) throw error;
         
         this.currentUser = null;
         this.userProfile = null;
+    },
+    
+    async resetPasswordDirectly(email, newPassword) {
+        if (!supabase || !supabase.auth) {
+            throw new Error('No se pudo conectar con el servidor');
+        }
+        
+        // Verificar que el usuario existe en la tabla users
+        const { data: users, error: checkError } = await supabase
+            .from('users')
+            .select('id, email, name, nickname, avatar_url')
+            .eq('email', email)
+            .limit(1);
+        
+        if (checkError || !users || users.length === 0) {
+            throw new Error('No existe una cuenta con ese correo electrónico');
+        }
+        
+        const userProfile = users[0];
+        
+        // SOLUCIÓN SIMPLE PARA APP FAMILIAR:
+        // Guardar la solicitud de reset en localStorage
+        // Luego enviar email de Supabase que al hacer clic automáticamente usa la nueva contraseña
+        localStorage.setItem('pending_password_reset', JSON.stringify({
+            email: email,
+            newPassword: newPassword,
+            timestamp: Date.now()
+        }));
+        
+        // Enviar email de recuperación de Supabase
+        const { error: resetError } = await supabase.auth.resetPasswordForEmail(email, {
+            redirectTo: window.location.origin
+        });
+        
+        if (resetError) {
+            localStorage.removeItem('pending_password_reset');
+            throw new Error('Error al enviar email: ' + resetError.message);
+        }
+        
+        return { 
+            success: true, 
+            message: '¡Revisa tu correo! Haz clic en el enlace para completar el cambio',
+            emailSent: true
+        };
+    },
+    
+    async updatePassword(newPassword) {
+        if (!supabase || !supabase.auth) {
+            throw new Error('No se pudo conectar con el servidor');
+        }
+        
+        const { error } = await supabase.auth.updateUser({
+            password: newPassword
+        });
+        
+        if (error) throw error;
     },
     
     async updateProfile(updates) {
@@ -171,6 +328,8 @@ const Auth = {
 function initAuthForms() {
     const loginForm = Utils.$('#login-form');
     const registerForm = Utils.$('#register-form');
+    const forgotPasswordForm = Utils.$('#forgot-password-form');
+    const resetPasswordForm = Utils.$('#reset-password-form');
     const logoutBtn = Utils.$('#btn-logout');
     const avatarGrid = Utils.$('#avatar-grid');
     
@@ -247,6 +406,99 @@ function initAuthForms() {
             selectedAvatar = option.dataset.avatar;
             
             Effects.playSound('click');
+        });
+    }
+    
+    if (forgotPasswordForm) {
+        forgotPasswordForm.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            
+            const email = Utils.$('#forgot-email').value;
+            const newPassword = Utils.$('#forgot-new-password').value;
+            const confirmPassword = Utils.$('#forgot-confirm-password').value;
+            const submitBtn = forgotPasswordForm.querySelector('button[type="submit"]');
+            
+            // Validar que las contraseñas coincidan
+            if (newPassword !== confirmPassword) {
+                showToast('Las contraseñas no coinciden', 'error');
+                return;
+            }
+            
+            if (newPassword.length < 6) {
+                showToast('La contraseña debe tener al menos 6 caracteres', 'error');
+                return;
+            }
+            
+            submitBtn.disabled = true;
+            submitBtn.innerHTML = '<span>Restableciendo...</span>';
+            
+            try {
+                const result = await Auth.resetPasswordDirectly(email, newPassword);
+                
+                if (result.emailSent) {
+                    showToast(result.message, 'success');
+                    forgotPasswordForm.reset();
+                    
+                    // Volver al login después de 3 segundos
+                    setTimeout(() => {
+                        Navigation.showScreen('login');
+                    }, 3000);
+                } else {
+                    showToast('Contraseña restablecida exitosamente', 'success');
+                    forgotPasswordForm.reset();
+                    Navigation.showScreen('login');
+                }
+            } catch (error) {
+                showToast(error.message || 'Error al restablecer contraseña', 'error');
+            } finally {
+                submitBtn.disabled = false;
+                submitBtn.innerHTML = '<span>Restablecer contraseña</span><span class="btn-glow"></span>';
+            }
+        });
+    }
+    
+    if (resetPasswordForm) {
+        resetPasswordForm.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            
+            const newPassword = Utils.$('#new-password').value;
+            const confirmPassword = Utils.$('#confirm-password').value;
+            const submitBtn = resetPasswordForm.querySelector('button[type="submit"]');
+            
+            if (newPassword !== confirmPassword) {
+                showToast('Las contraseñas no coinciden', 'error');
+                return;
+            }
+            
+            if (newPassword.length < 6) {
+                showToast('La contraseña debe tener al menos 6 caracteres', 'error');
+                return;
+            }
+            
+            submitBtn.disabled = true;
+            submitBtn.innerHTML = '<span>Actualizando...</span>';
+            
+            try {
+                await Auth.updatePassword(newPassword);
+                showToast('¡Contraseña actualizada exitosamente!', 'success');
+                resetPasswordForm.reset();
+                
+                // Cerrar sesión y redirigir al login
+                setTimeout(async () => {
+                    try {
+                        await Auth.logout();
+                    } catch (e) {
+                        console.log('Logout after password reset:', e);
+                    }
+                    Navigation.showScreen('login');
+                    showToast('Inicia sesión con tu nueva contraseña', 'info');
+                }, 1500);
+            } catch (error) {
+                showToast(error.message || 'Error al actualizar contraseña', 'error');
+            } finally {
+                submitBtn.disabled = false;
+                submitBtn.innerHTML = '<span>Actualizar contraseña</span><span class="btn-glow"></span>';
+            }
         });
     }
     
